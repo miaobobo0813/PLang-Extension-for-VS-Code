@@ -181,9 +181,9 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
             { label: '=', detail: 'Equal to', insertText: '=' },
             { label: '~', detail: 'Not', insertText: '~' },
             { label: '<', detail: 'Less than', insertText: '<' },
-            { label: '>', detail: 'Bigger than', insertText: '>' },
+            { label: '>', detail: 'Greater than', insertText: '>' },
             { label: '</=', detail: 'Less than or equal to', insertText: '</=' },
-            { label: '>/=', detail: 'Bigger than or equal to', insertText: '>/=' }
+            { label: '>/=', detail: 'Greater than or equal to', insertText: '>/=' }
         ];
         
         return operators.map(op => {
