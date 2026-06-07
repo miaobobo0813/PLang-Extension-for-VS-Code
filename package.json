@@ -5,7 +5,7 @@
   "version": "0.0.1",
   "repository": {
     "type": "git", 
-    "url": "https://github.com/miaobobo0813/PLang Extension for VS Code"
+    "url": "https://github.com/miaobobo0813/PLang-Extension-for-VS-Code"
   },
   "engines": {
     "vscode": "^1.120.0"
