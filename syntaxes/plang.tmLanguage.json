@@ -1,0 +1,73 @@
+{
+	"name": "PLang",
+	"patterns": [
+		{
+			"include": "#comments"
+		}, 
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#strings"
+		}, 
+		{
+			"include": "#modifiers"
+		}, 
+		{
+			"include": "#operators"
+		}
+	],
+	"repository": {
+		"comments": {
+			"begin": "using\\.tips\\(", 
+			"end": "\\)\\s*;?", 
+			"name": "comment.line.special.plang", 
+			"patterns": [
+				{
+					"name": "comment.line.special.plang", 
+					"match": "."
+				}
+			]
+		}, 
+		"keywords": {
+			"patterns": [{
+				"name": "keyword.control.plang",
+				"match": "\\b(using|loop|vars|ter)\\b"
+			}]
+		},
+		"strings": {
+			"name": "string.quoted.double.plang",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.plang",
+					"match": "\\\\."
+				}
+			]
+		}, 
+		"modifiers": {
+			"patterns": [{
+				"name": "modifier.control.plang", 
+				"match": "\\b(tips|otpt|modify|new|while|for|when|codes|range)\\b"
+			}]
+		}, 
+		"operators": {
+			"patterns": [
+				{
+					"name": "keyword.operator.arithmetic.plang",
+					"match": "\\+|\\-|\\*|`|%"
+				},
+				{
+					"name": "keyword.operator.comparison.plang",
+					"match": "=|<|>|</=|>/="
+				},
+				{
+					"name": "keyword.operator.logical.plang",
+					"match": "/|&|~"
+				}
+			]
+		}
+	},
+	"scopeName": "source.plang"
+}

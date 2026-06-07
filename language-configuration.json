@@ -1,0 +1,25 @@
+{
+    "comments": {
+        "lineComment": {
+            "comment": "using.tips(\""
+        },
+        "blockComment": [ "using.tips(\"", "\");" ]
+    },
+    "brackets": [
+        ["{", "}"],
+        ["[", "]"],
+        ["(", ")"]
+    ],
+    "autoClosingPairs": [
+        ["{", "}"],
+        ["[", "]"],
+        ["(", ")"],
+        ["\"", "\""]
+    ],
+    "surroundingPairs": [
+        ["{", "}"],
+        ["[", "]"],
+        ["(", ")"],
+        ["\"", "\""]
+    ]
+}

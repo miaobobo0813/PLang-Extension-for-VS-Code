@@ -1,0 +1,25 @@
+{
+  "name": "plang",
+  "displayName": "PLang",
+  "description": "PLang language support for VS Code",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "plang",
+      "aliases": ["PLang", "plang"],
+      "extensions": [".plang"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "plang",
+      "scopeName": "source.plang",
+      "path": "./syntaxes/plang.tmLanguage.json"
+    }]
+  }
+}
