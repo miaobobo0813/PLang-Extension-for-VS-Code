@@ -9,17 +9,58 @@
   "categories": [
     "Programming Languages"
   ],
+  "main": "./out/extension.js",
   "contributes": {
-    "languages": [{
-      "id": "plang",
-      "aliases": ["PLang", "plang"],
-      "extensions": [".plang"],
-      "configuration": "./language-configuration.json"
-    }],
-    "grammars": [{
-      "language": "plang",
-      "scopeName": "source.plang",
-      "path": "./syntaxes/plang.tmLanguage.json"
-    }]
+    "languages": [
+      {
+        "id": "plang",
+        "aliases": [
+          "PLang",
+          "plang"
+        ],
+        "extensions": [
+          ".plang"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "plang",
+        "scopeName": "source.plang",
+        "path": "./syntaxes/plang.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "plang.triggerCompletion",
+        "title": "Trigger PLang Completion"
+      }
+    ],
+    "configuration": {
+      "title": "PLang",
+      "properties": {
+        "plang.completion.enableAutoTrigger": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable auto completion trigger"
+        },
+        "plang.completion.enableInComments": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable completion in comments"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.120.0",
+    "typescript": "^5.2.2"
   }
 }
