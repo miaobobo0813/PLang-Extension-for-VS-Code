@@ -112,7 +112,7 @@ class PLangCompletionProvider {
         return keywords.map(keyword => {
             const item = new vscode.CompletionItem(keyword, vscode.CompletionItemKind.Keyword);
             item.insertText = keyword;
-            item.detail = 'PLang Keywords';
+            item.detail = 'PLang keyword';
             item.documentation = this.getKeywordDoc(keyword);
             return item;
         });
@@ -132,7 +132,7 @@ class PLangCompletionProvider {
         return allModifiers.map(modifier => {
             const item = new vscode.CompletionItem(modifier, vscode.CompletionItemKind.Method);
             item.insertText = modifier;
-            item.detail = 'PLang 修饰符';
+            item.detail = 'PLang modifier';
             return item;
         });
     }
@@ -169,9 +169,9 @@ class PLangCompletionProvider {
             { label: '=', detail: 'Equal to', insertText: '=' },
             { label: '~', detail: 'Not', insertText: '~' },
             { label: '<', detail: 'Less than', insertText: '<' },
-            { label: '>', detail: 'Bigger than', insertText: '>' },
+            { label: '>', detail: 'Greater than', insertText: '>' },
             { label: '</=', detail: 'Less than or equal to', insertText: '</=' },
-            { label: '>/=', detail: 'Bigger than or equal to', insertText: '>/=' }
+            { label: '>/=', detail: 'Greater than or equal to', insertText: '>/=' }
         ];
         return operators.map(op => {
             const item = new vscode.CompletionItem(op.label, vscode.CompletionItemKind.Operator);
@@ -180,9 +180,6 @@ class PLangCompletionProvider {
             return item;
         });
     }
-    /**
-     * 获取类型补全
-     */
     getTypeCompletions() {
         const types = [
             { name: 'number', detail: 'Integer' },
@@ -223,7 +220,7 @@ class PLangCompletionProvider {
             'vars': 'Variable control\n\nModifiers: new, modify',
             'ter': 'Terminal control\n\nModifiers: otpt (output)'
         };
-        return new vscode.MarkdownString(docs[keyword] || 'PLang keywords');
+        return new vscode.MarkdownString(docs[keyword] || 'PLang keyword');
     }
 }
 exports.PLangCompletionProvider = PLangCompletionProvider;

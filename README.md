@@ -9,7 +9,3 @@ The compiler of PLang at here: [miaobobo0813/PLang](https://github.com/miaobobo0
 1. Grammar highlights.
 2. Supports `.plang` file extension.
 3. IntelliSense support.
-
-## License
-
-See LICENSE.md: [LICENSE](LICENSE.md)
