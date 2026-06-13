@@ -2,6 +2,7 @@
   "name": "plang",
   "displayName": "PLang",
   "description": "PLang language support for VS Code",
+  "publisher": "miaobobo0813",
   "version": "0.0.1",
   "repository": {
     "type": "git", 
