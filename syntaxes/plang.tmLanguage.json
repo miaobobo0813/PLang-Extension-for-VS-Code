@@ -32,7 +32,7 @@
 		"keywords": {
 			"patterns": [{
 				"name": "keyword.control.plang",
-				"match": "\\b(using|loop|vars|ter)\\b"
+				"match": "\\b(using|loop|vars|ter|operators)\\b"
 			}]
 		},
 		"strings": {
