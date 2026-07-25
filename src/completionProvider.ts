@@ -97,8 +97,6 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
         
         completions.push(...this.getTypeCompletions());
         
-        completions.push(...this.getSpecialContextCompletions(textBeforeCursor));
-        
         return completions;
     }
 
@@ -131,13 +129,27 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
             'loop': ['while', 'for', 'stop', 'skip', 'if']
         };
         
-        const allModifiers = ['tips', 'new', 'modify', 'otpt', 'inpt', 
-                              'while', 'for', 'stop', 'skip', 'if'];
+        const allModifiers: [string, string, string][] = [
+            ['tips', 'tips($0);', 'Comment'],
+            ['new', 'new(${1:name}, ${2:type}, ${3:value})', 'New variable'], 
+            ['modify', 'modify(${0:newValue})', 'Modify variable'], 
+            ['otpt', 'otpt(${0:text})', 'Output'], 
+            ['inpt', 'inpt(${0:variable})', 'Input'], 
+            ['while', 'while', 'While loop'], 
+            ['for', 'for', 'For loop'], 
+            ['stop', 'stop();', 'Break the loop'], 
+            ['skip', 'skip();', 'Skip the loop'], 
+            ['if', 'if', 'If loop'], 
+            ['codes', 'codes({\n\t$0\n})', 'Code block'], 
+            ['when', 'when(${1:condition})', 'Condition'],
+            ['range', 'range(${1:from}, ${2:to}, ${3:variable})', 'Range of for'], 
+            ['else', 'else({\n\t$0\n})', 'Code block when condition is false']
+        ];
         
         return allModifiers.map(modifier => {
-            const item = new vscode.CompletionItem(modifier, vscode.CompletionItemKind.Method);
-            item.insertText = modifier;
-            item.detail = 'PLang modifier';
+            const item = new vscode.CompletionItem(modifier[0], vscode.CompletionItemKind.Method);
+            item.insertText = new vscode.SnippetString(modifier[1]);
+            item.detail = modifier[2];
             return item;
         });
     }
@@ -210,44 +222,6 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
             item.detail = type.detail;
             return item;
         });
-    }
-
-    private getSpecialContextCompletions(textBeforeCursor: string): vscode.CompletionItem[] {
-        const completions: vscode.CompletionItem[] = [];
-        
-        if (/loop\.(while|for|if)\./.test(textBeforeCursor) && 
-            !textBeforeCursor.includes('codes')) {
-            const item = new vscode.CompletionItem('codes', vscode.CompletionItemKind.Method);
-            item.insertText = new vscode.SnippetString('codes({\n\t$0\n})');
-            item.detail = 'Code block';
-            completions.push(item);
-        }
-        
-        if (/loop\.(while|if)\./.test(textBeforeCursor) && 
-            !textBeforeCursor.includes('when')) {
-            const item = new vscode.CompletionItem('when', vscode.CompletionItemKind.Method);
-            item.insertText = new vscode.SnippetString('when(${1:condition})');
-            item.detail = 'Condition';
-            completions.push(item);
-        }
-
-        if (/loop\.for$/.test(textBeforeCursor) &&
-            !textBeforeCursor.includes('range')) {
-            const item = new vscode.CompletionItem('range', vscode.CompletionItemKind.Method);
-            item.insertText = new vscode.SnippetString('range(${1:from}, ${2:to}, ${3:variable})');
-            item.detail = 'Range of for';
-            completions.push(item);
-        }
-
-        if (/loop\.if$/.test(textBeforeCursor) &&
-            !textBeforeCursor.includes('else')) {
-            const item = new vscode.CompletionItem('else', vscode.CompletionItemKind.Method);
-            item.insertText = new vscode.SnippetString('else({\n\t$0\n})');
-            item.detail = 'Code block when condition is false';
-            completions.push(item)
-        }
-        
-        return completions;
     }
     
     private getKeywordDoc(keyword: string): vscode.MarkdownString {
