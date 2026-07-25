@@ -3,7 +3,7 @@
   "displayName": "PLang",
   "description": "PLang language support for VS Code",
   "publisher": "miaobobo0813",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "repository": {
     "type": "git", 
     "url": "https://github.com/miaobobo0813/PLang-Extension-for-VS-Code"

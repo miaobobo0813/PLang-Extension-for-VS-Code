@@ -49,7 +49,7 @@
 		"modifiers": {
 			"patterns": [{
 				"name": "modifier.control.plang", 
-				"match": "\\b(tips|otpt|modify|new|while|for|when|codes|range)\\b"
+				"match": "\\b(tips|otpt|inpt|modify|new|while|for|when|codes|range|if|else)\\b"
 			}]
 		}, 
 		"operators": {

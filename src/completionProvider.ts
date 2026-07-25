@@ -125,14 +125,14 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
     
     private getModifierCompletions(): vscode.CompletionItem[] {
         const modifiersByKeyword: { [key: string]: string[] } = {
-            'using': ['use', 'tips', 'sub'],
+            'using': ['tips'],
             'vars': ['new', 'modify'],
             'ter': ['otpt', 'inpt'],
-            'loop': ['while', 'for', 'stop', 'skip', 'when', 'codes', 'range']
+            'loop': ['while', 'for', 'stop', 'skip', 'if']
         };
         
-        const allModifiers = ['use', 'tips', 'sub', 'new', 'modify', 'otpt', 'inpt', 
-                              'while', 'for', 'stop', 'skip', 'when', 'codes', 'range'];
+        const allModifiers = ['tips', 'new', 'modify', 'otpt', 'inpt', 
+                              'while', 'for', 'stop', 'skip', 'if'];
         
         return allModifiers.map(modifier => {
             const item = new vscode.CompletionItem(modifier, vscode.CompletionItemKind.Method);
@@ -215,7 +215,7 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
     private getSpecialContextCompletions(textBeforeCursor: string): vscode.CompletionItem[] {
         const completions: vscode.CompletionItem[] = [];
         
-        if (/loop\.(while|for)\./.test(textBeforeCursor) && 
+        if (/loop\.(while|for|if)\./.test(textBeforeCursor) && 
             !textBeforeCursor.includes('codes')) {
             const item = new vscode.CompletionItem('codes', vscode.CompletionItemKind.Method);
             item.insertText = new vscode.SnippetString('codes({\n\t$0\n})');
@@ -223,12 +223,28 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
             completions.push(item);
         }
         
-        if (/loop\.while$/.test(textBeforeCursor) && 
+        if (/loop\.(while|if)\./.test(textBeforeCursor) && 
             !textBeforeCursor.includes('when')) {
             const item = new vscode.CompletionItem('when', vscode.CompletionItemKind.Method);
             item.insertText = new vscode.SnippetString('when(${1:condition})');
-            item.detail = 'Condition of while';
+            item.detail = 'Condition';
             completions.push(item);
+        }
+
+        if (/loop\.for$/.test(textBeforeCursor) &&
+            !textBeforeCursor.includes('range')) {
+            const item = new vscode.CompletionItem('range', vscode.CompletionItemKind.Method);
+            item.insertText = new vscode.SnippetString('range(${1:from}, ${2:to}, ${3:variable})');
+            item.detail = 'Range of for';
+            completions.push(item);
+        }
+
+        if (/loop\.if$/.test(textBeforeCursor) &&
+            !textBeforeCursor.includes('else')) {
+            const item = new vscode.CompletionItem('else', vscode.CompletionItemKind.Method);
+            item.insertText = new vscode.SnippetString('else({\n\t$0\n})');
+            item.detail = 'Code block when condition is false';
+            completions.push(item)
         }
         
         return completions;
@@ -238,7 +254,7 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
         const docs: { [key: string]: string } = {
             'loop': 'Loop control\n\nModifiers: while, for, stop, skip, when, codes, range',
             'vars': 'Variable control\n\nModifiers: new, modify',
-            'ter': 'Terminal control\n\nModifiers: otpt (output)'
+            'ter': 'Terminal control\n\nModifiers: otpt (output), inpt (input)'
         };
         
         return new vscode.MarkdownString(docs[keyword] || 'PLang keyword');
