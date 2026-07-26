@@ -637,12 +637,6 @@ export async function validateDocument(document: vscode.TextDocument, requestId 
         }
 
         if (!errors.length && (stderr?.trim() || stdout?.trim())) {
-            const fallback = (stderr?.trim() || stdout?.trim()).split('\n').slice(0, 10).join('\n');
-            diagnostics.push(new vscode.Diagnostic(
-                createFullDocumentRange(document),
-                `PLang output:\n${fallback}`,
-                vscode.DiagnosticSeverity.Warning
-            ));
             try { outputChannel?.appendLine(`No parseable errors; pushed output as warning for ${key}`); } catch {}
         }
     } catch (error: any) {
