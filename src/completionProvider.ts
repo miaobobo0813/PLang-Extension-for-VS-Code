@@ -255,37 +255,33 @@ export function activateCompletionProvider(context: vscode.ExtensionContext) {
 
 
 let diagnosticCollection: vscode.DiagnosticCollection;
-const timeoutMap = new Map<string, NodeJS.Timeout>();
 const validationRequests = new Map<string, number>();
-const activeProcesses = new Map<string, ReturnType<typeof execFile>>();
-const VALIDATION_DEBOUNCE_MS = 300;
+let isValidating = false;
+const pendingValidation = new Map<string, vscode.TextDocument>();
+const changeValidationTimeouts = new Map<string, NodeJS.Timeout>();
 const VALIDATION_TIMEOUT_MS = 4000;
+const CHANGE_VALIDATION_DEBOUNCE_MS = 1200;
+let outputChannel: vscode.OutputChannel | null = null;
 
 export function activateGrammarProvider(context: vscode.ExtensionContext) {
     diagnosticCollection = vscode.languages.createDiagnosticCollection('plang');
     context.subscriptions.push(diagnosticCollection);
+    outputChannel = vscode.window.createOutputChannel('PLang');
+    context.subscriptions.push(outputChannel);
 
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument((event) => {
-            const doc = event.document;
-            if (doc.languageId !== 'plang') return;
-
-            scheduleValidation(doc);
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.workspace.onDidSaveTextDocument((document) => {
+            const document = event.document;
             if (document.languageId !== 'plang') return;
 
-            runValidationNow(document);
+            scheduleValidation(document);
         })
     );
 
     context.subscriptions.push(
         vscode.workspace.onDidOpenTextDocument((document) => {
             if (document.languageId === 'plang') {
-                runValidationNow(document);
+                enqueueValidation(document);
             }
         })
     );
@@ -301,66 +297,83 @@ export function activateGrammarProvider(context: vscode.ExtensionContext) {
     );
 }
 
-function scheduleValidation(document: vscode.TextDocument) {
-    const key = document.uri.toString();
-    const existingTimeout = timeoutMap.get(key);
-    if (existingTimeout) {
-        clearTimeout(existingTimeout);
-    }
 
-    timeoutMap.set(key, setTimeout(() => {
-        timeoutMap.delete(key);
-        void runValidationForDocument(document, key);
-    }, VALIDATION_DEBOUNCE_MS));
+function enqueueValidation(document: vscode.TextDocument) {
+    const key = document.uri.toString();
+    pendingValidation.set(key, document);
+    try {
+        outputChannel?.appendLine(`Enqueued validation for ${key}`);
+    } catch {}
+
+    if (!isValidating) {
+        const iterator = pendingValidation.entries().next();
+        if (!iterator.done) {
+            const [nextKey, nextDocument] = iterator.value;
+            pendingValidation.delete(nextKey);
+            void runValidationForDocument(nextDocument, nextKey);
+        }
+    }
 }
 
-function runValidationNow(document: vscode.TextDocument) {
+function scheduleValidation(document: vscode.TextDocument) {
     const key = document.uri.toString();
-    const existingTimeout = timeoutMap.get(key);
+    const existingTimeout = changeValidationTimeouts.get(key);
     if (existingTimeout) {
         clearTimeout(existingTimeout);
-        timeoutMap.delete(key);
     }
 
-    void runValidationForDocument(document, key);
+    changeValidationTimeouts.set(key, setTimeout(() => {
+        changeValidationTimeouts.delete(key);
+        enqueueValidation(document);
+    }, CHANGE_VALIDATION_DEBOUNCE_MS));
 }
 
 function cancelValidation(key: string) {
-    const timeout = timeoutMap.get(key);
-    if (timeout) {
-        clearTimeout(timeout);
-        timeoutMap.delete(key);
-    }
-
-    const activeProcess = activeProcesses.get(key);
-    if (activeProcess) {
-        activeProcess.kill();
-        activeProcesses.delete(key);
-    }
-
+    pendingValidation.delete(key);
     validationRequests.delete(key);
 }
 
 async function runValidationForDocument(document: vscode.TextDocument, key: string) {
-    const requestId = (validationRequests.get(key) ?? 0) + 1;
-    validationRequests.set(key, requestId);
-
-    const existingProcess = activeProcesses.get(key);
-    if (existingProcess) {
-        existingProcess.kill();
-        activeProcesses.delete(key);
+    if (isValidating) {
+        pendingValidation.set(key, document);
+        return;
     }
 
+    isValidating = true;
+    const requestId = (validationRequests.get(key) ?? 0) + 1;
+    validationRequests.set(key, requestId);
+    outputChannel?.appendLine(`Start validation for ${key} (req ${requestId})`);
+
+    let diagnostics: vscode.Diagnostic[] = [];
     try {
-        const diagnostics = await validateDocument(document, requestId, key);
+        diagnostics = await validateDocument(document, requestId, key);
         if (requestId !== (validationRequests.get(key) ?? 0)) {
+            outputChannel?.appendLine(`Stale validation result for ${key} (req ${requestId}), skipping`);
             return;
         }
-
-        diagnosticCollection.set(document.uri, diagnostics);
-    } catch (error) {
+    } catch (error: any) {
         if (requestId === (validationRequests.get(key) ?? 0)) {
-            diagnosticCollection.set(document.uri, []);
+            diagnostics = [
+                new vscode.Diagnostic(
+                    createFullDocumentRange(document),
+                    `PLang validation failed: ${error?.message ?? String(error) ?? 'unknown error'}`,
+                    vscode.DiagnosticSeverity.Error
+                )
+            ];
+        }
+    } finally {
+        if (requestId === (validationRequests.get(key) ?? 0)) {
+            diagnosticCollection.set(document.uri, diagnostics);
+            outputChannel?.appendLine(`Set ${diagnostics.length} diagnostics for ${key}`);
+        }
+
+        isValidating = false;
+
+        const iterator = pendingValidation.entries().next();
+        if (!iterator.done) {
+            const [nextKey, nextDocument] = iterator.value;
+            pendingValidation.delete(nextKey);
+            void runValidationForDocument(nextDocument, nextKey);
         }
     }
 }
@@ -459,48 +472,135 @@ async function runPlangValidation(tempFile: string, key: string): Promise<{ stdo
     if (!plangExecutable) {
         throw new Error('PLang executable not found');
     }
+    try { outputChannel?.appendLine(`Temp file exists before run: ${tempFile} => ${fs.existsSync(tempFile)}`); } catch {}
+    const isBat = process.platform === 'win32' && plangExecutable.toLowerCase().endsWith('.bat');
 
-    const args = process.platform === 'win32' && plangExecutable.toLowerCase().endsWith('.bat')
-        ? ['/c', plangExecutable, tempFile, '--no-output']
-        : [tempFile, '--no-output'];
+    const execOnce = (command: string, args: string[], options: any) => {
+        return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+            const child = execFile(command, args, options, (error, stdout, stderr) => {
+                const outStr = stdout && typeof stdout === 'string' ? stdout : (stdout.toString());
+                const errStr = stderr && typeof stderr === 'string' ? stderr : (stderr.toString());
+                if (error) {
+                    try { outputChannel?.appendLine(`execOnce error: code=${error.code}, signal=${error.signal}, killed=${error.killed}, message=${error.message}`); } catch {}
+                    try { outputChannel?.appendLine(`execOnce output lengths: stdout=${outStr.length}, stderr=${errStr.length}`); } catch {}
+                    if (error.killed || error.code === 'ETIMEDOUT') {
+                        resolve({ stdout: outStr, stderr: errStr });
+                        return;
+                    }
 
-    const command = process.platform === 'win32' && plangExecutable.toLowerCase().endsWith('.bat')
-        ? 'cmd.exe'
-        : plangExecutable;
+                    if (error.code === 'ENOENT') {
+                        reject(error);
+                        return;
+                    }
 
-    return new Promise((resolve, reject) => {
-        const child = execFile(command, args, {
-            timeout: VALIDATION_TIMEOUT_MS,
-            windowsHide: true,
-            maxBuffer: 1024 * 1024
-        }, (error, stdout, stderr) => {
-            activeProcesses.delete(key);
+                    reject(Object.assign(error, { stdout: outStr, stderr: errStr }));
+                    return;
+                }
 
-            if (error && error.killed) {
-                reject(new Error('cancelled'));
-                return;
-            }
+                resolve({ stdout: outStr, stderr: errStr });
+            });
 
-            if (error && error.code === 'ENOENT') {
+            child.on('error', (error) => {
+                try { outputChannel?.appendLine(`child error: ${String((error as any)?.message || error)}`); } catch {}
                 reject(error);
-                return;
-            }
-
-            if (error && error.code === 'ETIMEDOUT') {
-                reject(error);
-                return;
-            }
-
-            resolve({ stdout, stderr: stderr || stdout || '' });
+            });
+            child.on('close', (code, signal) => {
+                try { outputChannel?.appendLine(`Process closed: code=${code}, signal=${signal}`); } catch {}
+            });
         });
+    };
 
-        child.on('error', (error) => {
-            activeProcesses.delete(key);
-            reject(error);
-        });
+    try { outputChannel?.appendLine(`Resolved PLang executable: ${plangExecutable}`); } catch {}
 
-        activeProcesses.set(key, child);
-    });
+    if (isBat) {
+        const scriptDir = path.dirname(plangExecutable);
+        const pythonCmd = process.env.PYTHON || 'python';
+        const pythonArgs = ['-m', 'sources.main', tempFile, '--no-output'];
+        const options = { env: { ...process.env, PYTHONPATH: scriptDir }, timeout: VALIDATION_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, cwd: scriptDir };
+
+        try { outputChannel?.appendLine(`Invoking: ${pythonCmd} ${pythonArgs.join(' ')} (PYTHONPATH=${scriptDir})`); } catch {}
+
+        const first = await execOnce(pythonCmd, pythonArgs, options);
+        try {
+            const s = (first.stdout || '').trim();
+            const e = (first.stderr || '').trim();
+            outputChannel?.appendLine(`First run returned lengths: stdout=${s.length}, stderr=${e.length}`);
+            if (s || e) {
+                outputChannel?.appendLine(`First run sample stdout:\n${s.split('\n').slice(0,5).join('\n')}`);
+                outputChannel?.appendLine(`First run sample stderr:\n${e.split('\n').slice(0,5).join('\n')}`);
+                return { stdout: first.stdout, stderr: first.stderr || '' };
+            }
+        } catch {}
+
+        try {
+            const retryArgs = ['-m', 'sources.main', tempFile];
+            try { outputChannel?.appendLine(`No output detected; retrying without --no-output: ${pythonCmd} ${retryArgs.join(' ')}`); } catch {}
+            const second = await execOnce(pythonCmd, retryArgs, options);
+            try {
+                const s2 = (second.stdout || '').trim();
+                const e2 = (second.stderr || '').trim();
+                outputChannel?.appendLine(`Retry run returned lengths: stdout=${s2.length}, stderr=${e2.length}`);
+                if (s2 || e2) {
+                    outputChannel?.appendLine(`Retry sample stdout:\n${s2.split('\n').slice(0,5).join('\n')}`);
+                    outputChannel?.appendLine(`Retry sample stderr:\n${e2.split('\n').slice(0,5).join('\n')}`);
+                }
+            } catch {}
+            return { stdout: second.stdout, stderr: second.stderr || '' };
+        } catch (e) {
+            try { outputChannel?.appendLine(`Retry failed: ${String((e as any)?.message || e)}`); } catch {}
+            return { stdout: first.stdout, stderr: first.stderr || '' };
+        }
+    }
+
+    const args = [tempFile, '--no-output'];
+    const command = plangExecutable;
+    const execCwd = path.dirname(plangExecutable) || undefined;
+    try { outputChannel?.appendLine(`Invoking: ${command} ${args.join(' ')} (cwd=${execCwd})`); } catch {}
+
+    const first = await execOnce(command, args, { timeout: VALIDATION_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, cwd: execCwd });
+    try {
+        const s = (first.stdout || '').trim();
+        const e = (first.stderr || '').trim();
+        outputChannel?.appendLine(`First run returned lengths: stdout=${s.length}, stderr=${e.length}`);
+        if (s || e) {
+            outputChannel?.appendLine(`First run sample stdout:\n${s.split('\n').slice(0,5).join('\n')}`);
+            outputChannel?.appendLine(`First run sample stderr:\n${e.split('\n').slice(0,5).join('\n')}`);
+            return { stdout: first.stdout, stderr: first.stderr || '' };
+        }
+    } catch {}
+
+    try {
+        const retryArgs = [tempFile];
+        try { outputChannel?.appendLine(`No output detected; retrying without --no-output: ${command} ${retryArgs.join(' ')}`); } catch {}
+        const second = await execOnce(command, retryArgs, { timeout: VALIDATION_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, cwd: execCwd });
+        try {
+            const s2 = (second.stdout || '').trim();
+            const e2 = (second.stderr || '').trim();
+            outputChannel?.appendLine(`Retry run returned lengths: stdout=${s2.length}, stderr=${e2.length}`);
+            if (s2 || e2) {
+                outputChannel?.appendLine(`Retry sample stdout:\n${s2.split('\n').slice(0,5).join('\n')}`);
+                outputChannel?.appendLine(`Retry sample stderr:\n${e2.split('\n').slice(0,5).join('\n')}`);
+            }
+        } catch {}
+        return { stdout: second.stdout, stderr: second.stderr || '' };
+    } catch (e) {
+        try { outputChannel?.appendLine(`Retry failed: ${String((e as any)?.message || e)}`); } catch {}
+        return { stdout: first.stdout, stderr: first.stderr || '' };
+    }
+}
+
+function createFullDocumentRange(document: vscode.TextDocument): vscode.Range {
+    const lastLine = document.lineCount > 0 ? document.lineCount - 1 : 0;
+    const endChar = document.lineCount > 0 ? document.lineAt(lastLine).text.length : 0;
+    return new vscode.Range(new vscode.Position(0, 0), new vscode.Position(lastLine, endChar));
+}
+
+function createFileExecutionDiagnostic(document: vscode.TextDocument, message: string): vscode.Diagnostic[] {
+    return [new vscode.Diagnostic(
+        createFullDocumentRange(document),
+        message,
+        vscode.DiagnosticSeverity.Error
+    )];
 }
 
 export async function validateDocument(document: vscode.TextDocument, requestId = 0, key = document.uri.toString()) {
@@ -511,9 +611,18 @@ export async function validateDocument(document: vscode.TextDocument, requestId 
     
     try {
         await fs.promises.writeFile(tempFile, document.getText(), 'utf-8');
-        const { stderr } = await runPlangValidation(tempFile, key);
+        try { outputChannel?.appendLine(`Wrote temp file: ${tempFile} exists=${fs.existsSync(tempFile)}`); } catch {}
+        const { stdout, stderr } = await runPlangValidation(tempFile, key);
+        try { outputChannel?.appendLine(`PLang stdout for ${key}:\n${(stdout||'').trim().split('\n').slice(0,20).join('\n')}`); } catch {}
+        try { outputChannel?.appendLine(`PLang stderr for ${key}:\n${(stderr||'').trim().split('\n').slice(0,20).join('\n')}`); } catch {}
 
-        const errors = parseErrors(stderr || '');
+        let errors = parseErrors(stderr || '');
+        if (!errors.length) {
+            errors = parseErrors(stdout || '');
+            if (errors.length) {
+                try { outputChannel?.appendLine(`Parsed errors from stdout for ${key}`); } catch {}
+            }
+        }
         for (const err of errors) {
             const range = new vscode.Range(
                 new vscode.Position(err.lineStart - 1, err.colStart - 1),
@@ -526,14 +635,24 @@ export async function validateDocument(document: vscode.TextDocument, requestId 
                 vscode.DiagnosticSeverity.Error
             ));
         }
-        
+
+        if (!errors.length && (stderr?.trim() || stdout?.trim())) {
+            const fallback = (stderr?.trim() || stdout?.trim()).split('\n').slice(0, 10).join('\n');
+            diagnostics.push(new vscode.Diagnostic(
+                createFullDocumentRange(document),
+                `PLang output:\n${fallback}`,
+                vscode.DiagnosticSeverity.Warning
+            ));
+            try { outputChannel?.appendLine(`No parseable errors; pushed output as warning for ${key}`); } catch {}
+        }
     } catch (error: any) {
         if (requestId && requestId !== (validationRequests.get(key) ?? 0)) {
             return diagnostics;
         }
 
-        if (error?.code === 'ENOENT') {
-            return diagnostics;
+        const message = error?.message || 'Unknown PLang execution error';
+        if (message === 'PLang executable not found' || error?.code === 'ENOENT' || message.includes('spawn')) {
+            return createFileExecutionDiagnostic(document, `Unable to execute PLang: ${message}`);
         }
 
         if (error?.code === 'ETIMEDOUT' || error?.message === 'cancelled') {
@@ -555,6 +674,8 @@ export async function validateDocument(document: vscode.TextDocument, requestId 
                     vscode.DiagnosticSeverity.Error
                 ));
             }
+        } else if (message) {
+            return createFileExecutionDiagnostic(document, `Unable to execute PLang: ${message}`);
         }
     } finally {
         await fs.promises.unlink(tempFile).catch(() => {});
