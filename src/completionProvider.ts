@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import { execFile } from 'child_process';
 
 export class PLangCompletionProvider implements vscode.CompletionItemProvider {
     
@@ -122,13 +125,6 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
     }
     
     private getModifierCompletions(): vscode.CompletionItem[] {
-        const modifiersByKeyword: { [key: string]: string[] } = {
-            'using': ['tips'],
-            'vars': ['new', 'modify'],
-            'ter': ['otpt', 'inpt'],
-            'loop': ['while', 'for', 'stop', 'skip', 'if']
-        };
-        
         const allModifiers: [string, string, string][] = [
             ['tips', 'tips($0);', 'Comment'],
             ['new', 'new(${1:name}, ${2:type}, ${3:value})', 'New variable'], 
@@ -247,4 +243,327 @@ export function activateCompletionProvider(context: vscode.ExtensionContext) {
     );
     
     context.subscriptions.push(disposable);
+}
+
+
+let diagnosticCollection: vscode.DiagnosticCollection;
+const timeoutMap = new Map<string, NodeJS.Timeout>();
+const validationRequests = new Map<string, number>();
+const activeProcesses = new Map<string, ReturnType<typeof execFile>>();
+const VALIDATION_DEBOUNCE_MS = 150;
+const VALIDATION_TIMEOUT_MS = 4000;
+
+export function activateGrammarProvider(context: vscode.ExtensionContext) {
+    diagnosticCollection = vscode.languages.createDiagnosticCollection('plang');
+    context.subscriptions.push(diagnosticCollection);
+
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeTextDocument((event) => {
+            const doc = event.document;
+            if (doc.languageId !== 'plang') return;
+
+            scheduleValidation(doc);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidSaveTextDocument((document) => {
+            if (document.languageId !== 'plang') return;
+
+            runValidationNow(document);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidOpenTextDocument((document) => {
+            if (document.languageId === 'plang') {
+                runValidationNow(document);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+            if (document.languageId === 'plang') {
+                diagnosticCollection.delete(document.uri);
+                cancelValidation(document.uri.toString());
+            }
+        })
+    );
+}
+
+function scheduleValidation(document: vscode.TextDocument) {
+    const key = document.uri.toString();
+    const existingTimeout = timeoutMap.get(key);
+    if (existingTimeout) {
+        clearTimeout(existingTimeout);
+    }
+
+    timeoutMap.set(key, setTimeout(() => {
+        timeoutMap.delete(key);
+        void runValidationForDocument(document, key);
+    }, VALIDATION_DEBOUNCE_MS));
+}
+
+function runValidationNow(document: vscode.TextDocument) {
+    const key = document.uri.toString();
+    const existingTimeout = timeoutMap.get(key);
+    if (existingTimeout) {
+        clearTimeout(existingTimeout);
+        timeoutMap.delete(key);
+    }
+
+    void runValidationForDocument(document, key);
+}
+
+function cancelValidation(key: string) {
+    const timeout = timeoutMap.get(key);
+    if (timeout) {
+        clearTimeout(timeout);
+        timeoutMap.delete(key);
+    }
+
+    const activeProcess = activeProcesses.get(key);
+    if (activeProcess) {
+        activeProcess.kill();
+        activeProcesses.delete(key);
+    }
+
+    validationRequests.delete(key);
+}
+
+async function runValidationForDocument(document: vscode.TextDocument, key: string) {
+    const requestId = (validationRequests.get(key) ?? 0) + 1;
+    validationRequests.set(key, requestId);
+
+    const existingProcess = activeProcesses.get(key);
+    if (existingProcess) {
+        existingProcess.kill();
+        activeProcesses.delete(key);
+    }
+
+    try {
+        const diagnostics = await validateDocument(document, requestId, key);
+        if (requestId !== (validationRequests.get(key) ?? 0)) {
+            return;
+        }
+
+        diagnosticCollection.set(document.uri, diagnostics);
+    } catch (error) {
+        if (requestId === (validationRequests.get(key) ?? 0)) {
+            diagnosticCollection.set(document.uri, []);
+        }
+    }
+}
+
+function getVSCodeDir(document: vscode.TextDocument): string | null {
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (!workspaceFolder) return null;
+    
+    const vscodeDir = path.join(workspaceFolder.uri.fsPath, '.vscode');
+    if (!fs.existsSync(vscodeDir)) {
+        fs.mkdirSync(vscodeDir, { recursive: true });
+    }
+    return vscodeDir;
+}
+
+function getTempFilePath(document: vscode.TextDocument): string | null {
+    const vscodeDir = getVSCodeDir(document);
+    if (!vscodeDir) return null;
+    
+    const originalName = path.basename(document.uri.fsPath, '.plang');
+    return path.join(vscodeDir, `_forGrammarCheckFile_${originalName}.plang`);
+}
+
+function getExecutableCandidates(): string[] {
+    const candidates = new Set<string>();
+
+    if (process.env.PLANG_PATH) {
+        candidates.add(process.env.PLANG_PATH);
+    }
+
+    const pathValue = process.env.PATH || '';
+    for (const entry of pathValue.split(path.delimiter)) {
+        if (!entry) continue;
+        candidates.add(path.join(entry, 'plang'));
+        candidates.add(path.join(entry, 'plang.exe'));
+        candidates.add(path.join(entry, 'plang.bat'));
+        candidates.add(path.join(entry, 'plang.cmd'));
+    }
+
+    if (process.platform === 'win32') {
+        const knownLocations = [
+            'C:\\PLang\\plang.bat',
+            path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Programs', 'PLang', 'plang.bat'),
+            path.join(process.env.LOCALAPPDATA || '', 'Programs', 'PLang', 'plang.bat'),
+            path.join(process.env.ProgramFiles || '', 'PLang', 'plang.bat'),
+            path.join(process.env['ProgramFiles(x86)'] || '', 'PLang', 'plang.bat')
+        ];
+
+        for (const location of knownLocations) {
+            candidates.add(location);
+        }
+    }
+
+    return Array.from(candidates);
+}
+
+async function resolvePlangExecutable(): Promise<string | null> {
+    for (const candidate of getExecutableCandidates()) {
+        if (!candidate) continue;
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    if (process.platform === 'win32') {
+        const { stdout } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+            execFile('where.exe', ['plang'], { windowsHide: true }, (error, stdout, stderr) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+
+                resolve({ stdout, stderr });
+            });
+        }).catch(() => ({ stdout: '', stderr: '' }));
+
+        const resolved = stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean);
+        if (resolved && fs.existsSync(resolved)) {
+            return resolved;
+        }
+    }
+
+    return null;
+}
+
+async function runPlangValidation(tempFile: string, key: string): Promise<{ stdout: string; stderr: string }> {
+    const plangExecutable = await resolvePlangExecutable();
+    if (!plangExecutable) {
+        throw new Error('PLang executable not found');
+    }
+
+    const args = process.platform === 'win32' && plangExecutable.toLowerCase().endsWith('.bat')
+        ? ['/c', plangExecutable, tempFile, '--no-output']
+        : [tempFile, '--no-output'];
+
+    const command = process.platform === 'win32' && plangExecutable.toLowerCase().endsWith('.bat')
+        ? 'cmd.exe'
+        : plangExecutable;
+
+    return new Promise((resolve, reject) => {
+        const child = execFile(command, args, {
+            timeout: VALIDATION_TIMEOUT_MS,
+            windowsHide: true,
+            maxBuffer: 1024 * 1024
+        }, (error, stdout, stderr) => {
+            activeProcesses.delete(key);
+
+            if (error && error.killed) {
+                reject(new Error('cancelled'));
+                return;
+            }
+
+            if (error && error.code === 'ENOENT') {
+                reject(error);
+                return;
+            }
+
+            if (error && error.code === 'ETIMEDOUT') {
+                reject(error);
+                return;
+            }
+
+            resolve({ stdout, stderr: stderr || stdout || '' });
+        });
+
+        child.on('error', (error) => {
+            activeProcesses.delete(key);
+            reject(error);
+        });
+
+        activeProcesses.set(key, child);
+    });
+}
+
+export async function validateDocument(document: vscode.TextDocument, requestId = 0, key = document.uri.toString()) {
+    const diagnostics: vscode.Diagnostic[] = [];
+    const tempFile = getTempFilePath(document);
+    
+    if (!tempFile) return diagnostics;
+    
+    try {
+        fs.writeFileSync(tempFile, document.getText(), 'utf-8');
+        const { stderr } = await runPlangValidation(tempFile, key);
+
+        const errors = parseErrors(stderr || '');
+        for (const err of errors) {
+            const range = new vscode.Range(
+                new vscode.Position(err.lineStart - 1, err.colStart - 1),
+                new vscode.Position(err.lineEnd - 1, err.colEnd)
+            );
+            
+            diagnostics.push(new vscode.Diagnostic(
+                range,
+                err.message,
+                vscode.DiagnosticSeverity.Error
+            ));
+        }
+        
+    } catch (error: any) {
+        if (requestId && requestId !== (validationRequests.get(key) ?? 0)) {
+            return diagnostics;
+        }
+
+        if (error?.code === 'ENOENT') {
+            return diagnostics;
+        }
+
+        if (error?.code === 'ETIMEDOUT' || error?.message === 'cancelled') {
+            return diagnostics;
+        }
+
+        if (error?.stderr) {
+            const errors = parseErrors(error.stderr);
+            for (const err of errors) {
+                
+                const range = new vscode.Range(
+                    new vscode.Position(err.lineStart - 1, err.colStart - 1),
+                    new vscode.Position(err.lineEnd - 1, err.colEnd)
+                );
+                
+                diagnostics.push(new vscode.Diagnostic(
+                    range,
+                    err.message,
+                    vscode.DiagnosticSeverity.Error
+                ));
+            }
+        }
+    } finally {
+        if (fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+        }
+    }
+    
+    return diagnostics;
+}
+
+function parseErrors(output: string): Array<{lineStart: number, lineEnd: number, colStart: number, colEnd: number, message: string}> {
+    const errors: Array<{lineStart: number, lineEnd: number, colStart: number, colEnd: number, message: string}> = [];
+    const lines = output.split('\n');
+    
+    for (const line of lines) {
+        const match = line.match(/Line:\s*(\d+)~(\d+),\s*Column:\s*(\d+)~(\d+):\s*(.+)/);
+        if (match) {
+            errors.push({
+                lineStart: parseInt(match[1]),
+                lineEnd: parseInt(match[2]),
+                colStart: parseInt(match[3]),
+                colEnd: parseInt(match[4]),
+                message: match[5].trim()
+            });
+        }
+    }
+    
+    return errors;
 }

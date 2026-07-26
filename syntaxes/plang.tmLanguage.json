@@ -20,7 +20,7 @@
 	"repository": {
 		"comments": {
 			"begin": "using\\.tips\\(", 
-			"end": "\\)\\s*;?", 
+			"end": "\"\\)\\s*;", 
 			"name": "comment.line.special.plang", 
 			"patterns": [
 				{
