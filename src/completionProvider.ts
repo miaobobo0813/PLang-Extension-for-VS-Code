@@ -3,6 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 
+const variableCache = new Map<string, { version: number; variables: string[] }>();
+let cachedPlangExecutable: string | null | undefined = undefined;
+
 export class PLangCompletionProvider implements vscode.CompletionItemProvider {
     
     provideCompletionItems(
@@ -16,8 +19,6 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
         }
         
         const lineText = document.lineAt(position.line).text;
-        const currentChar = lineText[position.character - 1];
-        
         const completions = this.getContextualCompletions(document, position, lineText);
         
         return completions;
@@ -151,17 +152,24 @@ export class PLangCompletionProvider implements vscode.CompletionItemProvider {
     }
     
     private getVariablesInDocument(document: vscode.TextDocument): string[] {
+        const key = document.uri.toString();
+        const cache = variableCache.get(key);
+        if (cache?.version === document.version) {
+            return cache.variables;
+        }
+
         const text = document.getText();
         const variables: string[] = [];
-        
         const varPattern = /vars\.new\((\w+),/g;
         let match;
-        
+
         while ((match = varPattern.exec(text)) !== null) {
             variables.push(match[1]);
         }
-        
-        return [...new Set(variables)];
+
+        const uniqueVariables = [...new Set(variables)];
+        variableCache.set(key, { version: document.version, variables: uniqueVariables });
+        return uniqueVariables;
     }
     
     private getVariableCompletions(variables: string[]): vscode.CompletionItem[] {
@@ -250,7 +258,7 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 const timeoutMap = new Map<string, NodeJS.Timeout>();
 const validationRequests = new Map<string, number>();
 const activeProcesses = new Map<string, ReturnType<typeof execFile>>();
-const VALIDATION_DEBOUNCE_MS = 150;
+const VALIDATION_DEBOUNCE_MS = 300;
 const VALIDATION_TIMEOUT_MS = 4000;
 
 export function activateGrammarProvider(context: vscode.ExtensionContext) {
@@ -287,6 +295,7 @@ export function activateGrammarProvider(context: vscode.ExtensionContext) {
             if (document.languageId === 'plang') {
                 diagnosticCollection.delete(document.uri);
                 cancelValidation(document.uri.toString());
+                variableCache.delete(document.uri.toString());
             }
         })
     );
@@ -356,21 +365,19 @@ async function runValidationForDocument(document: vscode.TextDocument, key: stri
     }
 }
 
-function getVSCodeDir(document: vscode.TextDocument): string | null {
+async function getVSCodeDir(document: vscode.TextDocument): Promise<string | null> {
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
     if (!workspaceFolder) return null;
-    
+
     const vscodeDir = path.join(workspaceFolder.uri.fsPath, '.vscode');
-    if (!fs.existsSync(vscodeDir)) {
-        fs.mkdirSync(vscodeDir, { recursive: true });
-    }
+    await fs.promises.mkdir(vscodeDir, { recursive: true });
     return vscodeDir;
 }
 
-function getTempFilePath(document: vscode.TextDocument): string | null {
-    const vscodeDir = getVSCodeDir(document);
+async function getTempFilePath(document: vscode.TextDocument): Promise<string | null> {
+    const vscodeDir = await getVSCodeDir(document);
     if (!vscodeDir) return null;
-    
+
     const originalName = path.basename(document.uri.fsPath, '.plang');
     return path.join(vscodeDir, `_forGrammarCheckFile_${originalName}.plang`);
 }
@@ -409,9 +416,17 @@ function getExecutableCandidates(): string[] {
 }
 
 async function resolvePlangExecutable(): Promise<string | null> {
+    if (cachedPlangExecutable !== undefined) {
+        if (cachedPlangExecutable && fs.existsSync(cachedPlangExecutable)) {
+            return cachedPlangExecutable;
+        }
+        cachedPlangExecutable = null;
+    }
+
     for (const candidate of getExecutableCandidates()) {
         if (!candidate) continue;
         if (fs.existsSync(candidate)) {
+            cachedPlangExecutable = candidate;
             return candidate;
         }
     }
@@ -430,10 +445,12 @@ async function resolvePlangExecutable(): Promise<string | null> {
 
         const resolved = stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean);
         if (resolved && fs.existsSync(resolved)) {
+            cachedPlangExecutable = resolved;
             return resolved;
         }
     }
 
+    cachedPlangExecutable = null;
     return null;
 }
 
@@ -488,12 +505,12 @@ async function runPlangValidation(tempFile: string, key: string): Promise<{ stdo
 
 export async function validateDocument(document: vscode.TextDocument, requestId = 0, key = document.uri.toString()) {
     const diagnostics: vscode.Diagnostic[] = [];
-    const tempFile = getTempFilePath(document);
+    const tempFile = await getTempFilePath(document);
     
     if (!tempFile) return diagnostics;
     
     try {
-        fs.writeFileSync(tempFile, document.getText(), 'utf-8');
+        await fs.promises.writeFile(tempFile, document.getText(), 'utf-8');
         const { stderr } = await runPlangValidation(tempFile, key);
 
         const errors = parseErrors(stderr || '');
@@ -540,9 +557,7 @@ export async function validateDocument(document: vscode.TextDocument, requestId 
             }
         }
     } finally {
-        if (fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-        }
+        await fs.promises.unlink(tempFile).catch(() => {});
     }
     
     return diagnostics;
