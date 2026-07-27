@@ -378,23 +378,6 @@ async function runValidationForDocument(document: vscode.TextDocument, key: stri
     }
 }
 
-async function getVSCodeDir(document: vscode.TextDocument): Promise<string | null> {
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    if (!workspaceFolder) return null;
-
-    const vscodeDir = path.join(workspaceFolder.uri.fsPath, '.vscode');
-    await fs.promises.mkdir(vscodeDir, { recursive: true });
-    return vscodeDir;
-}
-
-async function getTempFilePath(document: vscode.TextDocument): Promise<string | null> {
-    const vscodeDir = await getVSCodeDir(document);
-    if (!vscodeDir) return null;
-
-    const originalName = path.basename(document.uri.fsPath, '.plang');
-    return path.join(vscodeDir, `_forGrammarCheckFile_${originalName}.plang`);
-}
-
 function getExecutableCandidates(): string[] {
     const candidates = new Set<string>();
 
@@ -467,12 +450,11 @@ async function resolvePlangExecutable(): Promise<string | null> {
     return null;
 }
 
-async function runPlangValidation(tempFile: string, key: string): Promise<{ stdout: string; stderr: string }> {
+async function runPlangValidation(codes: string, key: string): Promise<{ stdout: string; stderr: string }> {
     const plangExecutable = await resolvePlangExecutable();
     if (!plangExecutable) {
         throw new Error('PLang executable not found');
     }
-    try { outputChannel?.appendLine(`Temp file exists before run: ${tempFile} => ${fs.existsSync(tempFile)}`); } catch {}
     const isBat = process.platform === 'win32' && plangExecutable.toLowerCase().endsWith('.bat');
 
     const execOnce = (command: string, args: string[], options: any) => {
@@ -515,7 +497,7 @@ async function runPlangValidation(tempFile: string, key: string): Promise<{ stdo
     if (isBat) {
         const scriptDir = path.dirname(plangExecutable);
         const pythonCmd = process.env.PYTHON || 'python';
-        const pythonArgs = ['-m', 'sources.main', tempFile, '--no-output'];
+        const pythonArgs = ['-m', 'sources.main', '--code', codes, '--no-output'];
         const options = { env: { ...process.env, PYTHONPATH: scriptDir }, timeout: VALIDATION_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, cwd: scriptDir };
 
         try { outputChannel?.appendLine(`Invoking: ${pythonCmd} ${pythonArgs.join(' ')} (PYTHONPATH=${scriptDir})`); } catch {}
@@ -533,7 +515,7 @@ async function runPlangValidation(tempFile: string, key: string): Promise<{ stdo
         } catch {}
 
         try {
-            const retryArgs = ['-m', 'sources.main', tempFile];
+            const retryArgs = ['-m', 'sources.main', '--code', `'${codes}'`];
             try { outputChannel?.appendLine(`No output detected; retrying without --no-output: ${pythonCmd} ${retryArgs.join(' ')}`); } catch {}
             const second = await execOnce(pythonCmd, retryArgs, options);
             try {
@@ -552,7 +534,7 @@ async function runPlangValidation(tempFile: string, key: string): Promise<{ stdo
         }
     }
 
-    const args = [tempFile, '--no-output'];
+    const args = ['--code', `'${codes}'`, '--no-output'];
     const command = plangExecutable;
     const execCwd = path.dirname(plangExecutable) || undefined;
     try { outputChannel?.appendLine(`Invoking: ${command} ${args.join(' ')} (cwd=${execCwd})`); } catch {}
@@ -570,7 +552,7 @@ async function runPlangValidation(tempFile: string, key: string): Promise<{ stdo
     } catch {}
 
     try {
-        const retryArgs = [tempFile];
+        const retryArgs = ['--code', `'${codes}'`];
         try { outputChannel?.appendLine(`No output detected; retrying without --no-output: ${command} ${retryArgs.join(' ')}`); } catch {}
         const second = await execOnce(command, retryArgs, { timeout: VALIDATION_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, cwd: execCwd });
         try {
@@ -605,14 +587,12 @@ function createFileExecutionDiagnostic(document: vscode.TextDocument, message: s
 
 export async function validateDocument(document: vscode.TextDocument, requestId = 0, key = document.uri.toString()) {
     const diagnostics: vscode.Diagnostic[] = [];
-    const tempFile = await getTempFilePath(document);
+    const codes = document.getText();
     
-    if (!tempFile) return diagnostics;
+    if (!codes) return diagnostics;
     
     try {
-        await fs.promises.writeFile(tempFile, document.getText(), 'utf-8');
-        try { outputChannel?.appendLine(`Wrote temp file: ${tempFile} exists=${fs.existsSync(tempFile)}`); } catch {}
-        const { stdout, stderr } = await runPlangValidation(tempFile, key);
+        const { stdout, stderr } = await runPlangValidation(codes, key);
         try { outputChannel?.appendLine(`PLang stdout for ${key}:\n${(stdout||'').trim().split('\n').slice(0,20).join('\n')}`); } catch {}
         try { outputChannel?.appendLine(`PLang stderr for ${key}:\n${(stderr||'').trim().split('\n').slice(0,20).join('\n')}`); } catch {}
 
@@ -672,7 +652,7 @@ export async function validateDocument(document: vscode.TextDocument, requestId 
             return createFileExecutionDiagnostic(document, `Unable to execute PLang: ${message}`);
         }
     } finally {
-        await fs.promises.unlink(tempFile).catch(() => {});
+        await fs.promises.unlink(codes).catch(() => {});
     }
     
     return diagnostics;
