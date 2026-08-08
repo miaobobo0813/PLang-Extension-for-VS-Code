@@ -378,6 +378,27 @@ async function runValidationForDocument(document: vscode.TextDocument, key: stri
     }
 }
 
+function isExecutableCandidate(candidate: string): boolean {
+    if (!candidate) {
+        return false;
+    }
+
+    try {
+        const stats = fs.statSync(candidate);
+        if (!stats.isFile()) {
+            return false;
+        }
+
+        if (process.platform === 'win32') {
+            return true;
+        }
+
+        return (stats.mode & 0o111) !== 0;
+    } catch {
+        return false;
+    }
+}
+
 function getExecutableCandidates(): string[] {
     const candidates = new Set<string>();
 
@@ -388,19 +409,32 @@ function getExecutableCandidates(): string[] {
     const pathValue = process.env.PATH || '';
     for (const entry of pathValue.split(path.delimiter)) {
         if (!entry) continue;
-        candidates.add(path.join(entry, 'plang'));
-        candidates.add(path.join(entry, 'plang.exe'));
-        candidates.add(path.join(entry, 'plang.bat'));
-        candidates.add(path.join(entry, 'plang.cmd'));
+        if (process.platform === 'win32') {
+            candidates.add(path.join(entry, 'plang.exe'));
+            candidates.add(path.join(entry, 'plang'));
+        } else {
+            candidates.add(path.join(entry, 'plang'));
+        }
     }
 
     if (process.platform === 'win32') {
         const knownLocations = [
-            'C:\\PLang\\plang.bat',
-            path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Programs', 'PLang', 'plang.bat'),
-            path.join(process.env.LOCALAPPDATA || '', 'Programs', 'PLang', 'plang.bat'),
-            path.join(process.env.ProgramFiles || '', 'PLang', 'plang.bat'),
-            path.join(process.env['ProgramFiles(x86)'] || '', 'PLang', 'plang.bat')
+            'C:\\PLang\\plang.exe',
+            path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Programs', 'PLang', 'plang.exe'),
+            path.join(process.env.LOCALAPPDATA || '', 'Programs', 'PLang', 'plang.exe'),
+            path.join(process.env.ProgramFiles || '', 'PLang', 'plang.exe'),
+            path.join(process.env['ProgramFiles(x86)'] || '', 'PLang', 'plang.exe')
+        ];
+
+        for (const location of knownLocations) {
+            candidates.add(location);
+        }
+    } else {
+        const knownLocations = [
+            '/usr/local/bin/plang',
+            '/usr/bin/plang',
+            '/opt/plang/bin/plang',
+            path.join(process.env.HOME || '', '.local', 'bin', 'plang')
         ];
 
         for (const location of knownLocations) {
@@ -413,7 +447,7 @@ function getExecutableCandidates(): string[] {
 
 async function resolvePlangExecutable(): Promise<string | null> {
     if (cachedPlangExecutable !== undefined) {
-        if (cachedPlangExecutable && fs.existsSync(cachedPlangExecutable)) {
+        if (cachedPlangExecutable && isExecutableCandidate(cachedPlangExecutable)) {
             return cachedPlangExecutable;
         }
         cachedPlangExecutable = null;
@@ -421,15 +455,18 @@ async function resolvePlangExecutable(): Promise<string | null> {
 
     for (const candidate of getExecutableCandidates()) {
         if (!candidate) continue;
-        if (fs.existsSync(candidate)) {
+        if (isExecutableCandidate(candidate)) {
             cachedPlangExecutable = candidate;
             return candidate;
         }
     }
 
-    if (process.platform === 'win32') {
+    const whichCommand = process.platform === 'win32' ? 'where.exe' : 'which';
+    const whichArgs = process.platform === 'win32' ? ['plang'] : ['plang'];
+
+    try {
         const { stdout } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-            execFile('where.exe', ['plang'], { windowsHide: true }, (error, stdout, stderr) => {
+            execFile(whichCommand, whichArgs, { windowsHide: true }, (error, stdout, stderr) => {
                 if (error) {
                     reject(error);
                     return;
@@ -437,13 +474,15 @@ async function resolvePlangExecutable(): Promise<string | null> {
 
                 resolve({ stdout, stderr });
             });
-        }).catch(() => ({ stdout: '', stderr: '' }));
+        });
 
         const resolved = stdout.split(/\r?\n/).map(line => line.trim()).find(Boolean);
-        if (resolved && fs.existsSync(resolved)) {
+        if (resolved && isExecutableCandidate(resolved)) {
             cachedPlangExecutable = resolved;
             return resolved;
         }
+    } catch {
+        // Ignore and fall back to the cached null result below.
     }
 
     cachedPlangExecutable = null;
@@ -455,7 +494,6 @@ async function runPlangValidation(codes: string, key: string): Promise<{ stdout:
     if (!plangExecutable) {
         throw new Error('PLang executable not found');
     }
-    const isBat = process.platform === 'win32' && plangExecutable.toLowerCase().endsWith('.bat');
 
     const execOnce = (command: string, args: string[], options: any) => {
         return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
@@ -494,47 +532,7 @@ async function runPlangValidation(codes: string, key: string): Promise<{ stdout:
 
     try { outputChannel?.appendLine(`Resolved PLang executable: ${plangExecutable}`); } catch {}
 
-    if (isBat) {
-        const scriptDir = path.dirname(plangExecutable);
-        const pythonCmd = process.env.PYTHON || 'python';
-        const pythonArgs = ['-m', 'sources.main', '--code', codes, '--no-output'];
-        const options = { env: { ...process.env, PYTHONPATH: scriptDir }, timeout: VALIDATION_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, cwd: scriptDir };
-
-        try { outputChannel?.appendLine(`Invoking: ${pythonCmd} ${pythonArgs.join(' ')} (PYTHONPATH=${scriptDir})`); } catch {}
-
-        const first = await execOnce(pythonCmd, pythonArgs, options);
-        try {
-            const s = (first.stdout || '').trim();
-            const e = (first.stderr || '').trim();
-            outputChannel?.appendLine(`First run returned lengths: stdout=${s.length}, stderr=${e.length}`);
-            if (s || e) {
-                outputChannel?.appendLine(`First run sample stdout:\n${s.split('\n').slice(0,5).join('\n')}`);
-                outputChannel?.appendLine(`First run sample stderr:\n${e.split('\n').slice(0,5).join('\n')}`);
-                return { stdout: first.stdout, stderr: first.stderr || '' };
-            }
-        } catch {}
-
-        try {
-            const retryArgs = ['-m', 'sources.main', '--code', `'${codes}'`];
-            try { outputChannel?.appendLine(`No output detected; retrying without --no-output: ${pythonCmd} ${retryArgs.join(' ')}`); } catch {}
-            const second = await execOnce(pythonCmd, retryArgs, options);
-            try {
-                const s2 = (second.stdout || '').trim();
-                const e2 = (second.stderr || '').trim();
-                outputChannel?.appendLine(`Retry run returned lengths: stdout=${s2.length}, stderr=${e2.length}`);
-                if (s2 || e2) {
-                    outputChannel?.appendLine(`Retry sample stdout:\n${s2.split('\n').slice(0,5).join('\n')}`);
-                    outputChannel?.appendLine(`Retry sample stderr:\n${e2.split('\n').slice(0,5).join('\n')}`);
-                }
-            } catch {}
-            return { stdout: second.stdout, stderr: second.stderr || '' };
-        } catch (e) {
-            try { outputChannel?.appendLine(`Retry failed: ${String((e as any)?.message || e)}`); } catch {}
-            return { stdout: first.stdout, stderr: first.stderr || '' };
-        }
-    }
-
-    const args = ['--code', `'${codes}'`, '--no-output'];
+    const args = ['--code', codes, '--no-output'];
     const command = plangExecutable;
     const execCwd = path.dirname(plangExecutable) || undefined;
     try { outputChannel?.appendLine(`Invoking: ${command} ${args.join(' ')} (cwd=${execCwd})`); } catch {}
@@ -552,7 +550,7 @@ async function runPlangValidation(codes: string, key: string): Promise<{ stdout:
     } catch {}
 
     try {
-        const retryArgs = ['--code', `'${codes}'`];
+        const retryArgs = ['--code', codes];
         try { outputChannel?.appendLine(`No output detected; retrying without --no-output: ${command} ${retryArgs.join(' ')}`); } catch {}
         const second = await execOnce(command, retryArgs, { timeout: VALIDATION_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024, cwd: execCwd });
         try {
