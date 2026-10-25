@@ -132,6 +132,10 @@ connection.languages.diagnostics.on(async (params) => {
 });
 
 async function validateTextDocument(textDocument: TextDocument): Promise<Diagnostic[]> {
+    if (!textDocument.getText().trim()) {
+        return [];
+    }
+
     const result = await new Promise<{
         stdout: string;
         stderr: string;
