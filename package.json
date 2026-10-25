@@ -35,28 +35,7 @@
         "scopeName": "source.plang",
         "path": "./syntaxes/plang.tmLanguage.json"
       }
-    ],
-    "commands": [
-      {
-        "command": "plang.triggerCompletion",
-        "title": "Trigger PLang Completion"
-      }
-    ],
-    "configuration": {
-      "title": "PLang",
-      "properties": {
-        "plang.completion.enableAutoTrigger": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable auto completion trigger"
-        },
-        "plang.completion.enableInComments": {
-          "type": "boolean",
-          "default": false,
-          "description": "Enable completion in comments"
-        }
-      }
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

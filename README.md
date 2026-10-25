@@ -1,22 +1,23 @@
 # PLang Extension for VS Code
 
-## About PLang
-
-The PLang compiler at [miaobobo0813/PLang](https://github.com/miaobobo0813/PLang). The grammar of PLang is also at the repository.
+Language support for [PLang](https://github.com/miaobobo0813/PLang) files in Visual Studio Code.
 
 ## Features
 
-1. Grammar highlights.
-2. Supports `.plang` file extension.
-3. IntelliSense support.
+- Syntax highlighting for `.plang` files.
+- IntelliSense completions for PLang keywords, modifiers, variables, operators, and types.
+- Live syntax and compilation diagnostics from the PLang compiler, run with `--no-output`.
+- Compiler errors with line and column information are underlined. Errors without a source location appear in the Problems panel without an underline.
 
-## Dependencies
+## Requirements
 
-1. Install [PLang compiler](https://github.com/miaobobo0813/PLang) for IntelliSense. Dependicies for PLang compiler:
-    - **Python 3.6+** - To run the compiler
-    - **G++ (GCC)** - To compile generated C++ code
-2. **VS Code 1.120.0+**
+- Visual Studio Code 1.140.0 or later.
+- The PLang compiler is required for live diagnostics. IntelliSense completions work without it.
+
+The extension starts the compiler as `plang`. Ensure it is available on the VS Code process's `PATH`.
+
+Launch VS Code from that PowerShell session for the environment variable to be inherited. The compiler is run with `--no-output --code` against the current editor contents, so diagnostics also reflect unsaved changes.
 
 ## License
 
-MIT License, See [LICENSE.md](LICENSE.md)
+MIT License. See [LICENSE.md](LICENSE.md).
