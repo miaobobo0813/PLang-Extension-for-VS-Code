@@ -1,0 +1,20 @@
+{
+	"name": "plang-client",
+    "description": "The client of PLang language support for VS Code",
+    "publisher": "miaobobo0813",
+    "version": "0.3.0",
+    "repository": {
+        "type": "git", 
+        "url": "https://github.com/miaobobo0813/PLang-Extension-for-VS-Code"
+    },
+	"engines": {
+		"vscode": "^1.140.0"
+	},
+	"dependencies": {
+		"glob": "^13.0.6",
+		"vscode-languageclient": "^11.0.0"
+	},
+	"devDependencies": {
+		"@types/vscode": "^1.140.0"
+	}
+}

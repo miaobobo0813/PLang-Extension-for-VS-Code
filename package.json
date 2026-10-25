@@ -3,18 +3,18 @@
   "displayName": "PLang",
   "description": "PLang language support for VS Code",
   "publisher": "miaobobo0813",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "repository": {
-    "type": "git", 
+    "type": "git",
     "url": "https://github.com/miaobobo0813/PLang-Extension-for-VS-Code"
   },
   "engines": {
-    "vscode": "^1.120.0"
+    "vscode": "^1.140.0"
   },
   "categories": [
     "Programming Languages"
   ],
-  "main": "./out/extension.js",
+  "main": "./client/out/extension.js",
   "contributes": {
     "languages": [
       {
@@ -60,12 +60,18 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p client && tsc -p server",
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
-    "@types/node": "^20.x",
-    "@types/vscode": "^1.120.0",
-    "typescript": "^5.2.2"
+    "@types/node": "^26.6.5",
+    "@types/vscode": "^1.140.0",
+    "@typescript/native": "^7.0.2",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^11.0.0",
+    "vscode-languageserver": "^11.0.0",
+    "vscode-languageserver-textdocument": "^1.0.16"
   }
 }
